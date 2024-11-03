@@ -1539,8 +1539,6 @@ template <typename scalar_at = float, typename result_at = float> struct metric_
         result_t epsilon = std::numeric_limits<result_t>::epsilon();
 #if USEARCH_USE_OPENMP
 #pragma omp simd reduction(+ : kld_pm, kld_qm)
-#elif defined(USEARCH_DEFINED_CLANG)
-#pragma clang loop vectorize(enable)
 #elif defined(USEARCH_DEFINED_GCC)
 #pragma GCC ivdep
 #endif
