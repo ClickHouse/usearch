@@ -1657,6 +1657,12 @@ template <std::size_t alignment_ak = 1> class memory_mapping_allocator_gt {
 
     static constexpr std::size_t min_capacity() { return 1024 * 1024 * 4; }
     static constexpr std::size_t capacity_multiplier() { return 2; }
+    /// -----
+    /// Clickhouse-specific patch
+    /// After reaching 512 MB, switch the allocation strategy from exponential to additive.
+    /// See https://github.com/ClickHouse/ClickHouse/issues/78056 for details
+    static constexpr std::size_t additive_alloc_threshold() { return 512 * 1024 * 1024; }
+    /// -----
     static constexpr std::size_t head_size() {
         /// Pointer to the the previous arena and the size of the current one.
         return divide_round_up<alignment_ak>(sizeof(byte_t*) + sizeof(std::size_t)) * alignment_ak;
@@ -1751,6 +1757,11 @@ template <std::size_t alignment_ak = 1> class memory_mapping_allocator_gt {
                 checked_mul((std::max)(last_capacity_, rounded_bytes.value), capacity_multiplier());
             if (!new_cap)
                 return nullptr;
+            /// -----
+            /// Clickhouse-specific patch
+            if (new_cap.value >= additive_alloc_threshold())
+                new_cap.value = additive_alloc_threshold();
+            /// -----
             checked_size_result_t new_total_allocated = checked_add(total_allocated_, new_cap.value);
             if (!new_total_allocated)
                 return nullptr;
