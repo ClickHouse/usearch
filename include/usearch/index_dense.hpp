@@ -403,7 +403,7 @@ class index_dense_gt {
     using serialization_config_t = index_dense_serialization_config_t;
 
     using dynamic_allocator_t = aligned_allocator_gt<byte_t, 64>;
-    using tape_allocator_t = memory_mapping_allocator_gt<64>;
+    using tape_allocator_t = memory_mapping_allocator_gt<8>;
 
   private:
     /// @brief Punned index.
