@@ -728,7 +728,7 @@ class max_heap_gt {
      */
     usearch_profiled_m bool reserve(std::size_t new_capacity) noexcept {
         usearch_profile_name_m(max_heap_reserve);
-        if (new_capacity < capacity_)
+        if (new_capacity <= capacity_)
             return true;
 
         new_capacity = ceil2(new_capacity);
@@ -894,7 +894,7 @@ class sorted_buffer_gt {
     inline void clear() noexcept { size_ = 0; }
 
     bool reserve(std::size_t new_capacity) noexcept {
-        if (new_capacity < capacity_)
+        if (new_capacity <= capacity_)
             return true;
 
         new_capacity = ceil2(new_capacity);
@@ -915,6 +915,8 @@ class sorted_buffer_gt {
     }
 
     inline void insert_reserved(element_t&& element) noexcept {
+        if (!capacity_ || size_ >= capacity_)
+            return;
         std::size_t slot = size_ ? std::lower_bound(elements_, elements_ + size_, element, &less) - elements_ : 0;
         std::size_t to_move = size_ - slot;
         element_t* source = elements_ + size_ - 1;
@@ -928,15 +930,20 @@ class sorted_buffer_gt {
      *  @return `true` if the entry was added, `false` if it wasn't relevant enough.
      */
     inline bool insert(element_t&& element, std::size_t limit) noexcept {
-        std::size_t slot = size_ ? std::lower_bound(elements_, elements_ + size_, element, &less) - elements_ : 0;
-        if (slot == limit)
+        // Clamp limit to capacity to prevent heap-buffer-overflow when callers
+        // pass a limit larger than the allocated buffer.
+        std::size_t effective_limit = capacity_ ? (std::min)(limit, capacity_) : 0;
+        if (!effective_limit)
             return false;
-        std::size_t to_move = size_ - slot - (size_ == limit);
-        element_t* source = elements_ + size_ - 1 - (size_ == limit);
+        std::size_t slot = size_ ? std::lower_bound(elements_, elements_ + size_, element, &less) - elements_ : 0;
+        if (slot == effective_limit)
+            return false;
+        std::size_t to_move = size_ - slot - (size_ == effective_limit);
+        element_t* source = elements_ + size_ - 1 - (size_ == effective_limit);
         for (; to_move; --to_move, --source)
             source[1] = source[0];
         elements_[slot] = element;
-        size_ += size_ != limit;
+        size_ += size_ != effective_limit;
         return true;
     }
 
@@ -4053,6 +4060,10 @@ class index_gt {
         // At the very least we are going to explore the starting node and its neighbors
         if (!visits.reserve(config_.connectivity_base + 1u))
             return false;
+        if (!top.reserve(top_limit))
+            return false;
+        if (!next.reserve(top_limit))
+            return false;
 
         // Optional prefetching
         if (!is_dummy<prefetch_at>())
@@ -4129,6 +4140,10 @@ class index_gt {
 
         // At the very least we are going to explore the starting node and its neighbors
         if (!visits.reserve(config_.connectivity_base + 1u))
+            return false;
+        if (!top.reserve(top_limit))
+            return false;
+        if (!next.reserve(top_limit))
             return false;
 
         // Optional prefetching
