@@ -915,8 +915,6 @@ class sorted_buffer_gt {
     }
 
     inline void insert_reserved(element_t&& element) noexcept {
-        if (!capacity_ || size_ >= capacity_)
-            return;
         std::size_t slot = size_ ? std::lower_bound(elements_, elements_ + size_, element, &less) - elements_ : 0;
         std::size_t to_move = size_ - slot;
         element_t* source = elements_ + size_ - 1;
@@ -930,20 +928,15 @@ class sorted_buffer_gt {
      *  @return `true` if the entry was added, `false` if it wasn't relevant enough.
      */
     inline bool insert(element_t&& element, std::size_t limit) noexcept {
-        // Clamp limit to capacity to prevent heap-buffer-overflow when callers
-        // pass a limit larger than the allocated buffer.
-        std::size_t effective_limit = capacity_ ? (std::min)(limit, capacity_) : 0;
-        if (!effective_limit)
-            return false;
         std::size_t slot = size_ ? std::lower_bound(elements_, elements_ + size_, element, &less) - elements_ : 0;
-        if (slot == effective_limit)
+        if (slot == limit)
             return false;
-        std::size_t to_move = size_ - slot - (size_ == effective_limit);
-        element_t* source = elements_ + size_ - 1 - (size_ == effective_limit);
+        std::size_t to_move = size_ - slot - (size_ == limit);
+        element_t* source = elements_ + size_ - 1 - (size_ == limit);
         for (; to_move; --to_move, --source)
             source[1] = source[0];
         elements_[slot] = element;
-        size_ += size_ != effective_limit;
+        size_ += size_ != limit;
         return true;
     }
 

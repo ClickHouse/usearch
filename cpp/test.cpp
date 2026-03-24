@@ -1182,39 +1182,16 @@ void test_isolate() {
 /**
  *  @brief Regression tests for sorted_buffer_gt heap-buffer-overflow.
  *
- *  The bug: sorted_buffer_gt::insert(element, limit) trusted the caller to have
- *  reserved at least `limit` elements. When `limit > capacity_`, the shift-loop
- *  at source[1] = source[0] writes past the heap allocation.
- *
- *  Trigger paths:
- *    1. search_to_insert_() / search_to_update_() never called top.reserve().
- *    2. insert() called with limit > capacity and no bounds check.
- *    3. reserve() off-by-one (< vs <=) causing unnecessary reallocation.
+ *  Root cause: search_to_insert_() / search_to_update_() never called
+ *  top.reserve() / next.reserve() before using sorted_buffer_gt, and
+ *  reserve() had an off-by-one (< vs <=) causing spurious reallocation.
  */
 void test_sorted_buffer_overflow() {
     using candidate_t = typename index_gt<float, std::int64_t, slot32_t>::candidate_t;
     using candidates_allocator_t = std::allocator<candidate_t>;
     using sorted_buffer_t = sorted_buffer_gt<candidate_t, std::less<candidate_t>, candidates_allocator_t>;
 
-    // Test 1: insert_reserved on zero-capacity buffer must not crash
-    {
-        sorted_buffer_t buf;
-        // Do NOT call reserve — simulates missing reserve in search_to_insert_
-        buf.insert_reserved({0.5f, static_cast<slot32_t>(0)});
-        expect(buf.size() == 0); // No-op, not a crash
-    }
-
-    // Test 2: insert with limit > capacity must not overflow
-    {
-        sorted_buffer_t buf;
-        buf.reserve(4);
-        std::size_t cap = buf.capacity();
-        for (int i = 0; i < 200; i++)
-            buf.insert({static_cast<float>(i) * 0.1f, static_cast<slot32_t>(i)}, 100);
-        expect(buf.size() <= cap);
-    }
-
-    // Test 3: reserve with equal capacity should be a no-op
+    // Test 1: reserve with equal capacity should be a no-op (<=  fix)
     {
         sorted_buffer_t buf;
         buf.reserve(16);
@@ -1224,15 +1201,7 @@ void test_sorted_buffer_overflow() {
         expect(cap1 == cap2);
     }
 
-    // Test 4: insert on zero-capacity buffer must not crash
-    {
-        sorted_buffer_t buf;
-        bool inserted = buf.insert({1.0f, static_cast<slot32_t>(0)}, 10);
-        expect(!inserted);
-        expect(buf.size() == 0);
-    }
-
-    // Test 5: normal fill and eviction works correctly
+    // Test 2: normal fill and eviction works correctly
     {
         sorted_buffer_t buf;
         std::size_t limit = 4;
@@ -1240,14 +1209,13 @@ void test_sorted_buffer_overflow() {
         for (std::size_t i = 1; i <= limit; i++)
             buf.insert({static_cast<float>(i), static_cast<slot32_t>(i)}, limit);
         expect(buf.size() == limit);
-        // Insert a closer candidate — should evict the farthest
         bool inserted = buf.insert({0.5f, static_cast<slot32_t>(99)}, limit);
         expect(inserted);
         expect(buf.size() == limit);
-        expect(buf.top().distance < 4.0f); // 4.0 was evicted
+        expect(buf.top().distance < 4.0f);
     }
 
-    // Test 6: insert_reserved with proper capacity
+    // Test 3: insert_reserved with proper capacity
     {
         sorted_buffer_t buf;
         buf.reserve(4);
@@ -1256,16 +1224,6 @@ void test_sorted_buffer_overflow() {
         buf.insert_reserved({0.7f, static_cast<slot32_t>(2)});
         expect(buf.size() == 3);
         expect(buf.top().distance == 0.7f);
-    }
-
-    // Test 7: insert_reserved must stop at capacity
-    {
-        sorted_buffer_t buf;
-        buf.reserve(2);
-        std::size_t cap = buf.capacity();
-        for (std::size_t i = 0; i < cap + 10; i++)
-            buf.insert_reserved({static_cast<float>(i), static_cast<slot32_t>(i)});
-        expect(buf.size() <= cap);
     }
 }
 

@@ -2,14 +2,9 @@
  *  @file       test_sorted_buffer_overflow.cpp
  *  @brief      Regression tests for sorted_buffer_gt heap-buffer-overflow fix.
  *
- *  The bug: sorted_buffer_gt::insert(element, limit) trusted the caller to
- *  have reserved at least `limit` elements. When `limit > capacity_`, the
- *  shift-loop (source[1] = source[0]) writes past the heap allocation.
- *
- *  Trigger paths:
- *    1. search_to_insert_() / search_to_update_() never called top.reserve().
- *    2. insert() called with limit > capacity and no bounds check.
- *    3. reserve() off-by-one (< vs <=) causing unnecessary reallocation.
+ *  Root cause: search_to_insert_() / search_to_update_() never called
+ *  top.reserve() / next.reserve() before using sorted_buffer_gt, and
+ *  reserve() had an off-by-one (< vs <=) causing spurious reallocation.
  *
  *  Compile (with ASAN):
  *    g++ -std=c++17 -fsanitize=address -fno-omit-frame-pointer -g \
@@ -63,39 +58,6 @@ using max_heap_t = max_heap_gt<candidate_t, std::less<candidate_t>, candidates_a
 
 // ---- sorted_buffer_gt tests ----
 
-void test_insert_reserved_no_capacity() {
-    std::printf("  test_insert_reserved_no_capacity ... ");
-    sorted_buffer_t buf;
-    // Do NOT call reserve — simulates missing reserve in search_to_insert_
-    buf.insert_reserved({0.5f, static_cast<slot32_t>(0)});
-    EXPECT(buf.size() == 0);
-    std::printf("PASS\n");
-    tests_passed++;
-}
-
-void test_insert_limit_exceeds_capacity() {
-    std::printf("  test_insert_limit_exceeds_capacity ... ");
-    sorted_buffer_t buf;
-    buf.reserve(4);
-    std::size_t cap = buf.capacity();
-    // insert with limit=100 >> capacity — must not overflow
-    for (int i = 0; i < 200; i++)
-        buf.insert({static_cast<float>(i) * 0.1f, static_cast<slot32_t>(i)}, 100);
-    EXPECT(buf.size() <= cap);
-    std::printf("PASS (size=%zu, cap=%zu)\n", buf.size(), cap);
-    tests_passed++;
-}
-
-void test_insert_zero_capacity() {
-    std::printf("  test_insert_zero_capacity ... ");
-    sorted_buffer_t buf;
-    bool inserted = buf.insert({1.0f, static_cast<slot32_t>(0)}, 10);
-    EXPECT(!inserted);
-    EXPECT(buf.size() == 0);
-    std::printf("PASS\n");
-    tests_passed++;
-}
-
 void test_reserve_equal_capacity() {
     std::printf("  test_reserve_equal_capacity ... ");
     sorted_buffer_t buf;
@@ -135,18 +97,6 @@ void test_insert_reserved_with_capacity() {
     EXPECT(buf.size() == 3);
     EXPECT(buf.top().distance == 0.7f);
     std::printf("PASS\n");
-    tests_passed++;
-}
-
-void test_insert_reserved_stops_at_capacity() {
-    std::printf("  test_insert_reserved_stops_at_capacity ... ");
-    sorted_buffer_t buf;
-    buf.reserve(2);
-    std::size_t cap = buf.capacity();
-    for (std::size_t i = 0; i < cap + 10; i++)
-        buf.insert_reserved({static_cast<float>(i), static_cast<slot32_t>(i)});
-    EXPECT(buf.size() <= cap);
-    std::printf("PASS (size=%zu, cap=%zu)\n", buf.size(), cap);
     tests_passed++;
 }
 
@@ -236,13 +186,9 @@ int main() {
     std::printf("=== sorted_buffer_gt heap-buffer-overflow regression tests ===\n\n");
 
     std::printf("sorted_buffer_gt unit tests:\n");
-    test_insert_reserved_no_capacity();
-    test_insert_limit_exceeds_capacity();
-    test_insert_zero_capacity();
     test_reserve_equal_capacity();
     test_normal_fill_and_eviction();
     test_insert_reserved_with_capacity();
-    test_insert_reserved_stops_at_capacity();
 
     std::printf("\nmax_heap_gt unit tests:\n");
     test_max_heap_reserve_equal_capacity();
