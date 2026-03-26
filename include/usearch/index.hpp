@@ -732,7 +732,7 @@ class max_heap_gt {
             return true;
 
         new_capacity = ceil2(new_capacity);
-        if (!new_capacity)
+        if (new_capacity == 0)
             return false;
         new_capacity = (std::max<std::size_t>)(new_capacity, (std::max<std::size_t>)(capacity_ * 2u, 16u));
         auto allocator = allocator_t{};
@@ -900,7 +900,7 @@ class sorted_buffer_gt {
             return true;
 
         new_capacity = ceil2(new_capacity);
-        if (!new_capacity)
+        if (new_capacity == 0)
             return false;
         new_capacity = (std::max<std::size_t>)(new_capacity, (std::max<std::size_t>)(capacity_ * 2u, 16u));
         auto allocator = allocator_t{};
