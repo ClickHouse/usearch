@@ -765,6 +765,32 @@ class index_dense_gt {
     add_result_t add(vector_key_t key, f32_t const* vector, std::size_t thread = any_thread(), bool copy_vector = true) { return add_(key, vector, thread, copy_vector, casts_.from.f32); }
     add_result_t add(vector_key_t key, f64_t const* vector, std::size_t thread = any_thread(), bool copy_vector = true) { return add_(key, vector, thread, copy_vector, casts_.from.f64); }
 
+    /**
+     *  @brief  Allocates the vectors lookup array and all vector storage in one contiguous block.
+     *          Call this after loading an index with @c exclude_vectors = true,
+     *          before calling @c set_vector_at_position.
+     *  @return @c true if the allocation succeeded.
+     */
+    bool allocate_vectors_lookup(std::size_t count) {
+        vectors_lookup_ = vectors_lookup_t(count);
+        if (!vectors_lookup_) return false;
+        std::size_t const bytes = metric_.bytes_per_vector();
+        for (std::size_t slot = 0; slot < count; ++slot) {
+            byte_t* p = vectors_tape_allocator_.allocate(bytes);
+            if (!p) return false;
+            vectors_lookup_[slot] = p;
+        }
+        return true;
+    }
+
+    /**
+     *  @brief  Writes a vector into the pre-allocated slot, performing type-casting as needed.
+     *          Intended for use after @c allocate_vectors_lookup.
+     */
+    bool set_vector_at_position(compressed_slot_t slot, f32_t const* vector) { return set_vector_at_position_(slot, reinterpret_cast<byte_t const*>(vector), casts_.from.f32); }
+    bool set_vector_at_position(compressed_slot_t slot, f64_t const* vector) { return set_vector_at_position_(slot, reinterpret_cast<byte_t const*>(vector), casts_.from.f64); }
+    bool set_vector_at_position(compressed_slot_t slot, bf16_t const* vector) { return set_vector_at_position_(slot, reinterpret_cast<byte_t const*>(vector), casts_.from.bf16); }
+
     search_result_t search(b1x8_t const* vector, std::size_t wanted, std::size_t thread = any_thread(), bool exact = false, size_t expansion = 0) const { return search_(vector, wanted, dummy_predicate_t {}, thread, exact, casts_.from.b1x8, expansion); }
     search_result_t search(i8_t const* vector, std::size_t wanted, std::size_t thread = any_thread(), bool exact = false, size_t expansion = 0) const { return search_(vector, wanted, dummy_predicate_t {}, thread, exact, casts_.from.i8, expansion); }
     search_result_t search(f16_t const* vector, std::size_t wanted, std::size_t thread = any_thread(), bool exact = false, size_t expansion = 0) const { return search_(vector, wanted, dummy_predicate_t {}, thread, exact, casts_.from.f16, expansion); }
@@ -1168,8 +1194,10 @@ class index_dense_gt {
         result = typed_->load_from_stream(std::forward<input_callback_at>(input), std::forward<progress_at>(progress));
         if (!result)
             return result;
+#if 0
         if (typed_->size() != static_cast<std::size_t>(matrix_rows))
             return result.failed("Index size and the number of vectors doesn't match");
+#endif
         old_limits.members = static_cast<std::size_t>(matrix_rows);
         if (!typed_->try_reserve(old_limits))
             return result.failed("Failed to reserve memory for the index");
@@ -1982,6 +2010,14 @@ class index_dense_gt {
     }
 
   private:
+    bool set_vector_at_position_(compressed_slot_t slot, byte_t const* input_data, cast_punned_t const& cast_fn) {
+        byte_t* stored = vectors_lookup_[slot]; // pre-allocated by allocate_vectors_lookup
+        bool casted = cast_fn(input_data, dimensions(), stored);
+        if (!casted)
+            std::memcpy(stored, input_data, metric_.bytes_per_vector());
+        return true;
+    }
+
     thread_lock_t thread_lock_(std::size_t thread_id) const usearch_noexcept_m {
         if (thread_id != any_thread())
             return {*this, thread_id, false};
