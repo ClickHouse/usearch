@@ -1194,10 +1194,11 @@ class index_dense_gt {
         result = typed_->load_from_stream(std::forward<input_callback_at>(input), std::forward<progress_at>(progress));
         if (!result)
             return result;
-#if 0
-        if (typed_->size() != static_cast<std::size_t>(matrix_rows))
+        // When `exclude_vectors` is set, `matrix_rows` is 0 (the matrix header is not read),
+        // so the size/vector-count consistency check does not apply. For the legacy path the
+        // invariant still holds and catches mismatched, possibly-corrupted payloads.
+        if (!config.exclude_vectors && typed_->size() != static_cast<std::size_t>(matrix_rows))
             return result.failed("Index size and the number of vectors doesn't match");
-#endif
         old_limits.members = static_cast<std::size_t>(matrix_rows);
         if (!typed_->try_reserve(old_limits))
             return result.failed("Failed to reserve memory for the index");
