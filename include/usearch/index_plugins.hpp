@@ -1762,6 +1762,14 @@ template <std::size_t alignment_ak = 1> class memory_mapping_allocator_gt {
             /// Clickhouse-specific patch
             if (new_cap.value >= additive_alloc_threshold())
                 new_cap.value = additive_alloc_threshold();
+            /// A single allocation bigger than the threshold, or one for which `ceil2` overflowed, still needs an
+            /// arena that fits it. Otherwise the returned block extends past the mapping and the caller, which
+            /// believes it owns `count_bytes`, writes into unmapped memory.
+            checked_size_result_t min_capacity = checked_add(head_size(), extended_bytes.value);
+            if (!min_capacity)
+                return nullptr;
+            if (new_cap.value < min_capacity.value)
+                new_cap.value = min_capacity.value;
             /// -----
             checked_size_result_t new_total_allocated = checked_add(total_allocated_, new_cap.value);
             if (!new_total_allocated)
