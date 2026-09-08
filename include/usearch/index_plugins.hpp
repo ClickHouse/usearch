@@ -6,6 +6,7 @@
 #include <atomic>  // `std::atomic`
 #include <chrono>  // `std::chrono`
 #include <cstring> // `std::strncmp`
+#include <limits>  // `std::numeric_limits`
 #include <thread>  // `std::thread`
 
 #include <usearch/index.hpp> // `expected_gt` and macros
@@ -977,6 +978,14 @@ template <std::size_t alignment_ak = 1> class memory_mapping_allocator_gt {
      *  @return A pointer to the allocated memory block, or `nullptr` if allocation fails.
      */
     inline byte_t* allocate(std::size_t count_bytes) noexcept {
+        /// -----
+        /// Clickhouse-specific patch
+        /// Reject requests so large that rounding them up to an arena size would overflow.
+        std::size_t const max_count_bytes
+            = (std::numeric_limits<std::size_t>::max)() - head_size() - alignment_ak - page_allocator_t::page_size();
+        if (count_bytes > max_count_bytes)
+            return nullptr;
+        /// -----
         std::size_t extended_bytes = divide_round_up<alignment_ak>(count_bytes) * alignment_ak;
         std::unique_lock<std::mutex> lock(mutex_);
         if (!last_arena_ || (last_usage_ + extended_bytes >= last_capacity_)) {
@@ -985,6 +994,11 @@ template <std::size_t alignment_ak = 1> class memory_mapping_allocator_gt {
             /// Clickhouse-specific patch
             if (new_cap >= additive_alloc_threshold())
                 new_cap = additive_alloc_threshold();
+            /// A single allocation bigger than the threshold, or one for which `ceil2` overflowed, still needs an
+            /// arena that fits it. Otherwise the returned block extends past the mapping and the caller, which
+            /// believes it owns `count_bytes`, writes into unmapped memory.
+            if (new_cap < head_size() + extended_bytes)
+                new_cap = head_size() + extended_bytes;
             /// -----
             byte_t* new_arena = page_allocator_t{}.allocate(new_cap);
             if (!new_arena || new_arena == (byte_t*)MAP_FAILED)
