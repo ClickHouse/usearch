@@ -646,6 +646,7 @@ class bf16_bits_t {
     inline operator float() const noexcept { return bf16_to_f32(uint16_); }
     inline explicit operator bool() const noexcept { return bf16_to_f32(uint16_) > 0.5f; }
 
+    inline bf16_bits_t(std::uint16_t v) noexcept : uint16_(v) {}
     inline bf16_bits_t(int v) noexcept : uint16_(f32_to_bf16(static_cast<float>(v))) {}
     inline bf16_bits_t(bool v) noexcept : uint16_(f32_to_bf16(static_cast<float>(v))) {}
     inline bf16_bits_t(float v) noexcept : uint16_(f32_to_bf16(v)) {}
@@ -1657,6 +1658,12 @@ template <std::size_t alignment_ak = 1> class memory_mapping_allocator_gt {
 
     static constexpr std::size_t min_capacity() { return 1024 * 1024 * 4; }
     static constexpr std::size_t capacity_multiplier() { return 2; }
+    /// -----
+    /// Clickhouse-specific patch
+    /// After reaching 512 MB, switch the allocation strategy from exponential to additive.
+    /// See https://github.com/ClickHouse/ClickHouse/issues/78056 for details
+    static constexpr std::size_t additive_alloc_threshold() { return 512 * 1024 * 1024; }
+    /// -----
     static constexpr std::size_t head_size() {
         /// Pointer to the the previous arena and the size of the current one.
         return divide_round_up<alignment_ak>(sizeof(byte_t*) + sizeof(std::size_t)) * alignment_ak;
@@ -1751,6 +1758,19 @@ template <std::size_t alignment_ak = 1> class memory_mapping_allocator_gt {
                 checked_mul((std::max)(last_capacity_, rounded_bytes.value), capacity_multiplier());
             if (!new_cap)
                 return nullptr;
+            /// -----
+            /// Clickhouse-specific patch
+            if (new_cap.value >= additive_alloc_threshold())
+                new_cap.value = additive_alloc_threshold();
+            /// A single allocation bigger than the threshold, or one for which `ceil2` overflowed, still needs an
+            /// arena that fits it. Otherwise the returned block extends past the mapping and the caller, which
+            /// believes it owns `count_bytes`, writes into unmapped memory.
+            checked_size_result_t min_capacity = checked_add(head_size(), extended_bytes.value);
+            if (!min_capacity)
+                return nullptr;
+            if (new_cap.value < min_capacity.value)
+                new_cap.value = min_capacity.value;
+            /// -----
             checked_size_result_t new_total_allocated = checked_add(total_allocated_, new_cap.value);
             if (!new_total_allocated)
                 return nullptr;
