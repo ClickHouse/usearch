@@ -789,6 +789,12 @@ class striped_locks_gt {
     }
 
     inline void unlock(std::size_t i) noexcept { atomic_reset(i); }
+
+    /// -----
+    /// Clickhouse-specific patch
+    /// The number of bytes allocated for the stripes, including the alignment slack.
+    std::size_t memory_usage() const noexcept { return raw_bytes_; }
+    /// -----
 };
 
 /**
@@ -3698,6 +3704,12 @@ class index_gt {
 
         // Temporary data-structures, proportional to the number of threads:
         total += limits_.threads() * sizeof(context_t) + allocator_entry_bytes * 3;
+
+        /// -----
+        /// Clickhouse-specific patch
+        /// The lock stripes, proportional to the number of threads and the connectivity.
+        total += nodes_mutexes_.memory_usage() + allocator_entry_bytes;
+        /// -----
         return total;
     }
 
