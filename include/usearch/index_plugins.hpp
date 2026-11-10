@@ -1733,7 +1733,7 @@ class metric_punned_t {
     /// Distance function that takes two arrays and some callback state and returns a scalar.
     using metric_array_array_state_t = result_t (*)(uptr_t, uptr_t, uptr_t);
     /// Distance function callback, like `metric_array_array_size_t`, but depends on member variables.
-    using metric_routed_t = result_t (metric_punned_t::*)(uptr_t, uptr_t) const;
+    using metric_routed_t = result_t (metric_punned_t::*)(uptr_t, uptr_t) const noexcept;
 
     metric_routed_t metric_routed_ = nullptr;
     uptr_t metric_ptr_ = 0;
@@ -1933,9 +1933,22 @@ class metric_punned_t {
             return false;
 
         std::memcpy(&metric_ptr_, &simd_metric, sizeof(simd_metric));
-        metric_routed_ = metric_kind_ == metric_kind_t::ip_k
-                             ? reinterpret_cast<metric_routed_t>(&metric_punned_t::invoke_simsimd_reverse)
-                             : reinterpret_cast<metric_routed_t>(&metric_punned_t::invoke_simsimd);
+        switch (datatype) {
+        case simsimd_datatype_f32_k: route_simsimd<simsimd_f32_t>(); break;
+        case simsimd_datatype_f64_k: route_simsimd<simsimd_f64_t>(); break;
+#if SIMSIMD_DYNAMIC_DISPATCH
+        // SimSIMD's dispatching library is built with `SIMSIMD_NATIVE_F16 0` and `SIMSIMD_NATIVE_BF16 0` (c/lib.c), so
+        // its half-precision kernels take `unsigned short`, whatever `simsimd_f16_t` is here.
+        case simsimd_datatype_f16_k: route_simsimd<unsigned short>(); break;
+        case simsimd_datatype_bf16_k: route_simsimd<unsigned short>(); break;
+#else
+        case simsimd_datatype_f16_k: route_simsimd<simsimd_f16_t>(); break;
+        case simsimd_datatype_bf16_k: route_simsimd<simsimd_bf16_t>(); break;
+#endif
+        case simsimd_datatype_i8_k: route_simsimd<simsimd_i8_t>(); break;
+        case simsimd_datatype_b8_k: route_simsimd<simsimd_b8_t>(); break;
+        default: return false;
+        }
         isa_kind_ = simd_kind;
         return true;
     }
@@ -1944,19 +1957,27 @@ class metric_punned_t {
         return configure_with_simsimd(static_capabilities);
     }
 
-#if defined(USEARCH_DEFINED_CLANG) || defined(USEARCH_DEFINED_GCC)
-    __attribute__((no_sanitize("all")))
+    template <typename simd_scalar_at> void route_simsimd() noexcept {
+        metric_routed_ = metric_kind_ == metric_kind_t::ip_k ? &metric_punned_t::invoke_simsimd_reverse<simd_scalar_at>
+                                                             : &metric_punned_t::invoke_simsimd<simd_scalar_at>;
+    }
+
+    // The kernel is called through its exact type, so that Clang CFI (`cfi-icall`) checks the call.
+    template <typename simd_scalar_at>
+#if defined(USEARCH_DEFINED_CLANG)
+    __attribute__((no_sanitize("function")))
 #endif
-    result_t
-    invoke_simsimd(uptr_t a, uptr_t b) const noexcept {
+    result_t invoke_simsimd(uptr_t a, uptr_t b) const noexcept {
+        using kernel_t = void (*)(simd_scalar_at const*, simd_scalar_at const*, simsimd_size_t, simsimd_distance_t*);
         simsimd_distance_t result;
-        // Here `reinterpret_cast` raises warning and UBSan reports an issue... we know what we are doing!
-        auto function_pointer = (simsimd_metric_dense_punned_t)(metric_ptr_);
-        function_pointer(reinterpret_cast<void const*>(a), reinterpret_cast<void const*>(b), metric_third_arg_,
-                         &result);
+        auto function_pointer = reinterpret_cast<kernel_t>(metric_ptr_);
+        function_pointer(reinterpret_cast<simd_scalar_at const*>(a), reinterpret_cast<simd_scalar_at const*>(b),
+                         metric_third_arg_, &result);
         return (result_t)result;
     }
-    result_t invoke_simsimd_reverse(uptr_t a, uptr_t b) const noexcept { return 1 - invoke_simsimd(a, b); }
+    template <typename simd_scalar_at> result_t invoke_simsimd_reverse(uptr_t a, uptr_t b) const noexcept {
+        return 1 - invoke_simsimd<simd_scalar_at>(a, b);
+    }
 #else
     bool configure_with_simsimd() noexcept { return false; }
 #endif
