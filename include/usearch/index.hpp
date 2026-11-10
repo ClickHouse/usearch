@@ -578,7 +578,30 @@ template <typename allocator_at = std::allocator<byte_t>> class bitset_gt {
         __atomic_fetch_and(&slots_[i / bits_per_slot()], ~mask, __ATOMIC_RELEASE);
     }
 
+    inline bool atomic_test(std::size_t i) const noexcept {
+        compressed_slot_t mask{1ul << (i & bits_mask())};
+        return __atomic_load_n(&slots_[i / bits_per_slot()], __ATOMIC_RELAXED) & mask;
+    }
+
 #endif
+
+    /**
+     *  @brief Acquires the bit @b i, spinning until it is free.
+     *
+     *  A failed probe must not be a synchronization operation: a sanitizer runtime can map the
+     *  acquiring and the releasing atomic of one word onto one internal lock taken in incompatible
+     *  modes, preferring readers, so synchronizing probes can keep the holder from releasing.
+     */
+    inline void atomic_spin_set(std::size_t i) noexcept {
+#if defined(USEARCH_DEFINED_WINDOWS)
+        while (atomic_set(i))
+            ;
+#else
+        while (atomic_set(i))
+            while (atomic_test(i))
+                ;
+#endif
+    }
 
     class lock_t {
         bitset_gt& bitset_;
@@ -587,8 +610,7 @@ template <typename allocator_at = std::allocator<byte_t>> class bitset_gt {
       public:
         inline ~lock_t() noexcept { bitset_.atomic_reset(bit_offset_); }
         inline lock_t(bitset_gt& bitset, std::size_t bit_offset) noexcept : bitset_(bitset), bit_offset_(bit_offset) {
-            while (bitset_.atomic_set(bit_offset_))
-                ;
+            bitset_.atomic_spin_set(bit_offset_);
         }
     };
 
@@ -3811,8 +3833,7 @@ class index_gt {
     };
 
     inline node_lock_t node_lock_(std::size_t slot) const noexcept {
-        while (nodes_mutexes_.atomic_set(slot))
-            ;
+        nodes_mutexes_.atomic_spin_set(slot);
         return {nodes_mutexes_, slot};
     }
 
@@ -3827,8 +3848,7 @@ class index_gt {
 
     inline optional_node_lock_t optional_node_lock_(std::size_t slot, bool condition) const noexcept {
         if (condition) {
-            while (nodes_mutexes_.atomic_set(slot))
-                ;
+            nodes_mutexes_.atomic_spin_set(slot);
             return {nodes_mutexes_, slot};
         } else {
             return {nodes_mutexes_, std::numeric_limits<std::size_t>::max()};
@@ -4503,8 +4523,7 @@ static join_result_t join(               //
                 atomic_error.store("Terminated by user");
                 break;
             }
-            while (men_locks.atomic_set(free_man_slot))
-                ;
+            men_locks.atomic_spin_set(free_man_slot);
 
             proposals_count_t& free_man_proposals = proposal_counts[free_man_slot];
             if (free_man_proposals >= config.max_proposals)
@@ -4522,8 +4541,7 @@ static join_result_t join(               //
 
             auto match = candidates.back();
             auto woman = match.member;
-            while (women_locks.atomic_set(woman.slot))
-                ;
+            women_locks.atomic_spin_set(woman.slot);
 
             compressed_slot_t husband_slot = woman_to_man_slots[woman.slot];
             bool woman_is_free = husband_slot == missing_slot;
@@ -4538,8 +4556,7 @@ static join_result_t join(               //
                 distance_t distance_from_candidate = match.distance;
                 if (distance_from_husband > distance_from_candidate) {
                     // Break-up
-                    while (men_locks.atomic_set(husband_slot))
-                        ;
+                    men_locks.atomic_spin_set(husband_slot);
                     man_to_woman_slots[husband_slot] = missing_slot;
                     men_locks.atomic_reset(husband_slot);
 
