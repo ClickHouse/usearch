@@ -27,6 +27,18 @@
 #define USEARCH_USE_NUMKONG 0
 #endif
 
+/// -----
+/// Clickhouse-specific patch
+/// NumKong compiles its serial scalar casts (`nk_f16_to_f32_serial` and the like) as `noinline`, so calling them from
+/// the upcasts to `f32` below leaves an opaque call in every distance loop over `f16`, `bf16` and the mini-floats.
+/// Those loops are marked `#pragma clang loop vectorize(enable)`, and with LTO the vectorizer reports each one as a
+/// failed transformation, which fails the link with `-Werror`. The upcasts are exact, so the inline ones give the same
+/// values. The downcasts from `f32` keep using NumKong, which rounds to nearest even.
+#if !defined(USEARCH_USE_NUMKONG_SCALAR_CASTS)
+#define USEARCH_USE_NUMKONG_SCALAR_CASTS 0
+#endif
+/// -----
+
 #if USEARCH_USE_NUMKONG
 // Propagate the `f16` settings
 #if defined(USEARCH_CAN_COMPILE_FP16) || defined(USEARCH_CAN_COMPILE_FLOAT16)
@@ -429,7 +441,7 @@ inline expected_gt<metric_kind_t> metric_from_name(char const* name) {
  *  @brief Convenience function to upcast a half-precision floating point number to a single-precision one.
  */
 inline float f16_to_f32(std::uint16_t u16) noexcept {
-#if USEARCH_USE_NUMKONG
+#if USEARCH_USE_NUMKONG && USEARCH_USE_NUMKONG_SCALAR_CASTS
     nk_f32_t result;
     nk_f16_to_f32_serial((nk_f16_t const*)&u16, &result);
     return result;
@@ -525,7 +537,7 @@ inline std::uint16_t f32_to_f16(float f32) noexcept {
  *  https://github.com/ashvardanian/NumKong/blob/7e58e9fee9e096238cf29f7c30774fa3dcd0fe85/include/numkong/cast/serial.h#L226-L244
  */
 inline float bf16_to_f32(std::uint16_t u16) noexcept {
-#if USEARCH_USE_NUMKONG
+#if USEARCH_USE_NUMKONG && USEARCH_USE_NUMKONG_SCALAR_CASTS
     nk_bf16_t bits;
     std::memcpy(&bits, &u16, sizeof(bits));
     nk_f32_t result;
@@ -703,7 +715,7 @@ class bf16_bits_t {
  *         E5M2: 1 sign + 5 exponent (bias=15) + 2 mantissa, range +/-57344, supports inf/NaN.
  */
 inline float e5m2_to_f32(std::uint8_t u8) noexcept {
-#if USEARCH_USE_NUMKONG
+#if USEARCH_USE_NUMKONG && USEARCH_USE_NUMKONG_SCALAR_CASTS
     nk_f32_t result;
     nk_e5m2_to_f32_serial((nk_e5m2_t const*)&u8, &result);
     return result;
@@ -826,7 +838,7 @@ inline std::uint8_t f32_to_e5m2(float f32) noexcept {
  *         E4M3: 1 sign + 4 exponent (bias=7) + 3 mantissa, range +/-448, no inf.
  */
 inline float e4m3_to_f32(std::uint8_t u8) noexcept {
-#if USEARCH_USE_NUMKONG
+#if USEARCH_USE_NUMKONG && USEARCH_USE_NUMKONG_SCALAR_CASTS
     nk_f32_t result;
     nk_e4m3_to_f32_serial((nk_e4m3_t const*)&u8, &result);
     return result;
@@ -1055,7 +1067,7 @@ class e4m3_bits_t {
  *         E2M3: 1 sign + 2 exponent (bias=1) + 3 mantissa, stored as 0b00SEEMMM, range +/-7.5.
  */
 inline float e2m3_to_f32(std::uint8_t u8) noexcept {
-#if USEARCH_USE_NUMKONG
+#if USEARCH_USE_NUMKONG && USEARCH_USE_NUMKONG_SCALAR_CASTS
     nk_f32_t result;
     nk_e2m3_to_f32_serial((nk_e2m3_t const*)&u8, &result);
     return result;
@@ -1142,7 +1154,7 @@ inline std::uint8_t f32_to_e2m3(float f32) noexcept {
  *         E3M2: 1 sign + 3 exponent (bias=3) + 2 mantissa, stored as 0b00SEEEMM, range +/-28.
  */
 inline float e3m2_to_f32(std::uint8_t u8) noexcept {
-#if USEARCH_USE_NUMKONG
+#if USEARCH_USE_NUMKONG && USEARCH_USE_NUMKONG_SCALAR_CASTS
     nk_f32_t result;
     nk_e3m2_to_f32_serial((nk_e3m2_t const*)&u8, &result);
     return result;
